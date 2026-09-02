@@ -90,23 +90,38 @@
         if (el.tagName !== 'INPUT') return false;
         if (el.id === 'bmpf-hidden-password') return false;
         const name = el.getAttribute('name') || '';
-        return /^pin-\d+$/.test(name);
+        const parentTag = el.parentElement ? el.parentElement.tagName : '';
+        return /^(?:pin-\d+|password-\d+)$/.test(name) ||
+               parentTag === 'ING-INPUT-MASKED-PASSWORD-FIELD';
       });
 
       return inputs.map(el => {
-        const match = el.getAttribute('name').match(/^pin-(\d+)$/);
+        const name = el.getAttribute('name') || '';
+        let index = null;
+        const passMatch = name.match(/^password-(\d+)$/);
+        const pinMatch = name.match(/^pin-(\d+)$/);
+
+        if (passMatch) {
+          index = parseInt(passMatch[1], 10); // 0-based: password-0 -> 0
+        } else if (pinMatch) {
+          index = parseInt(pinMatch[1], 10) - 1; // 1-based: pin-1 -> 0
+        } else {
+          const numMatch = name.match(/(\d+)/);
+          index = numMatch ? parseInt(numMatch[1], 10) : null;
+        }
+
         return {
-          index: parseInt(match[1], 10), // 1-based index (pin-1 -> 1)
+          index, // 0-based index: password[index]
           input: el,
-          active: !el.disabled
+          active: !el.disabled && !el.readOnly
         };
-      }).sort((a, b) => a.index - b.index);
+      }).filter(item => item.index !== null).sort((a, b) => a.index - b.index);
     },
 
     getMaxRequiredLength() {
       const active = this.getMaskedInputs().filter(i => i.active);
       if (active.length === 0) return 0;
-      return Math.max(...active.map(i => i.index)); // 1-based index equals required string length
+      return Math.max(...active.map(i => i.index)) + 1; // 0-based index + 1
     },
 
     fill(password) {
@@ -116,7 +131,7 @@
       const activeItems = items.filter(i => i.active);
       if (activeItems.length === 0) return { success: false, count: 0, reason: 'No active inputs' };
 
-      const maxRequired = Math.max(...activeItems.map(i => i.index));
+      const maxRequired = Math.max(...activeItems.map(i => i.index)) + 1;
       if (password.length < maxRequired) {
         return {
           success: false,
@@ -129,9 +144,8 @@
       const chars = password.split('');
       let count = 0;
       for (const item of activeItems) {
-        const charIdx = item.index - 1; // 0-based
-        if (charIdx < chars.length) {
-          fillInputWithEvents(item.input, chars[charIdx]);
+        if (item.index < chars.length) {
+          fillInputWithEvents(item.input, chars[item.index]);
           count++;
         }
       }
@@ -303,7 +317,6 @@
       hiddenInput.id = 'bmpf-hidden-password';
       hiddenInput.name = 'password';
       hiddenInput.autocomplete = 'current-password';
-      hiddenInput.placeholder = 'Bitwarden autofill';
 
       // Bitwarden checks: width>=10, height>=10, opacity>=0.1, display!=none, visibility!=hidden.
       // Transparent styling: completely invisible to user, 100% visible & fillable to Bitwarden.

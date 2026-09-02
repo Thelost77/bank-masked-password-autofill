@@ -5,7 +5,10 @@
   "description": "Autofill masked passwords for ING Bank Śląski and Bank Pekao with Bitwarden and other password managers.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "bank-masked-password-autofill@thelost"
+      "id": "bank-masked-password-autofill@thelost",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "content_scripts": [

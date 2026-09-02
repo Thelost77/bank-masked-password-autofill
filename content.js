@@ -62,14 +62,25 @@
   function fillInputWithEvents(input, value) {
     input.focus();
     setNativeValue(input, value);
-    // Frameworks (Lit, Angular) listen primarily to 'input', 'keyup', and 'change'
+
+    // Support ING Lion Web Components (@lion/ui / ing-input)
+    if (input.parentElement && 'modelValue' in input.parentElement) {
+      try {
+        input.parentElement.modelValue = value;
+      } catch (_) {}
+    }
+
+    // Dispatch standard framework events
     input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     input.dispatchEvent(new Event('keyup', { bubbles: true, cancelable: true }));
     input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    input.dispatchEvent(new CustomEvent('model-value-changed', { bubbles: true, cancelable: true, detail: { value } }));
   }
 
   // --- Bank Adapters ---
   const INGAdapter = {
+    name: 'ING Bank Śląski',
+
     isApplicable() {
       return window.location.hostname.includes('ingbank.pl');
     },
@@ -92,25 +103,46 @@
       }).sort((a, b) => a.index - b.index);
     },
 
+    getMaxRequiredLength() {
+      const active = this.getMaskedInputs().filter(i => i.active);
+      if (active.length === 0) return 0;
+      return Math.max(...active.map(i => i.index)); // 1-based index equals required string length
+    },
+
     fill(password) {
       const items = this.getMaskedInputs();
-      if (items.length === 0) return 0;
+      if (items.length === 0) return { success: false, count: 0, reason: 'No masked inputs found' };
+
+      const activeItems = items.filter(i => i.active);
+      if (activeItems.length === 0) return { success: false, count: 0, reason: 'No active inputs' };
+
+      const maxRequired = Math.max(...activeItems.map(i => i.index));
+      if (password.length < maxRequired) {
+        return {
+          success: false,
+          count: 0,
+          pending: true,
+          reason: `Password length (${password.length}) is less than highest required index (${maxRequired})`
+        };
+      }
 
       const chars = password.split('');
       let count = 0;
-      for (const item of items) {
-        if (!item.active) continue;
+      for (const item of activeItems) {
         const charIdx = item.index - 1; // 0-based
         if (charIdx < chars.length) {
           fillInputWithEvents(item.input, chars[charIdx]);
           count++;
         }
       }
-      return count;
+
+      return { success: true, count, totalActive: activeItems.length };
     }
   };
 
   const PekaoAdapter = {
+    name: 'Bank Pekao SA',
+
     isApplicable() {
       return window.location.hostname.includes('pekao24.pl');
     },
@@ -144,20 +176,39 @@
       }).sort((a, b) => a.index - b.index);
     },
 
+    getMaxRequiredLength() {
+      const active = this.getMaskedInputs().filter(i => i.active);
+      if (active.length === 0) return 0;
+      return Math.max(...active.map(i => i.index)) + 1; // 0-based index + 1
+    },
+
     fill(password) {
       const items = this.getMaskedInputs();
-      if (items.length === 0) return 0;
+      if (items.length === 0) return { success: false, count: 0, reason: 'No masked inputs found' };
+
+      const activeItems = items.filter(i => i.active);
+      if (activeItems.length === 0) return { success: false, count: 0, reason: 'No active inputs' };
+
+      const maxRequired = Math.max(...activeItems.map(i => i.index)) + 1;
+      if (password.length < maxRequired) {
+        return {
+          success: false,
+          count: 0,
+          pending: true,
+          reason: `Password length (${password.length}) is less than highest required index (${maxRequired})`
+        };
+      }
 
       const chars = password.split('');
       let count = 0;
-      for (const item of items) {
-        if (!item.active) continue;
+      for (const item of activeItems) {
         if (item.index < chars.length) {
           fillInputWithEvents(item.input, chars[item.index]);
           count++;
         }
       }
-      return count;
+
+      return { success: true, count, totalActive: activeItems.length };
     }
   };
 
@@ -165,36 +216,100 @@
   if (!adapter) return;
 
   // --- Hidden Input Manager ---
+  let hiddenForm = null;
   let hiddenInput = null;
-  let isFilling = false;
+  let debounceTimer = null;
+  let isProcessing = false;
+
+  function processPassword() {
+    if (!hiddenInput || isProcessing) return;
+
+    const val = hiddenInput.value;
+    if (!val) return;
+
+    const maxRequired = adapter.getMaxRequiredLength();
+    if (val.length < maxRequired) {
+      console.log(`[BMPF] Waiting for full password (have ${val.length} chars, need at least ${maxRequired})...`);
+      return;
+    }
+
+    isProcessing = true;
+    console.log(`[BMPF] Processing password of length ${val.length} for ${adapter.name}...`);
+
+    const result = adapter.fill(val);
+    if (result.success) {
+      console.log(`[BMPF] ✓ Successfully filled ${result.count}/${result.totalActive} masked password slots!`);
+      // Wipe after brief settle period so autofill extensions don't see an abrupt mid-stream wipe
+      setTimeout(() => {
+        if (hiddenInput) hiddenInput.value = '';
+        isProcessing = false;
+      }, 700);
+    } else {
+      console.warn(`[BMPF] Fill pending or failed:`, result.reason);
+      isProcessing = false;
+    }
+  }
+
+  function scheduleProcessPassword(delayMs = 400) {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      processPassword();
+    }, delayMs);
+  }
 
   function ensureHiddenInput() {
     const masked = adapter.getMaskedInputs();
     const hasActiveMask = masked.length > 0 && masked.some(m => m.active);
 
     if (!hasActiveMask) {
-      if (hiddenInput && hiddenInput.parentNode) {
-        hiddenInput.remove();
+      if (hiddenForm && hiddenForm.parentNode) {
+        hiddenForm.remove();
+        hiddenForm = null;
         hiddenInput = null;
       }
       return;
     }
 
     if (!hiddenInput || !hiddenInput.isConnected) {
-      hiddenInput = document.createElement('input');
-      hiddenInput.type = 'password';
-      hiddenInput.id = 'bmpf-hidden-password';
-      hiddenInput.name = 'password';
-      hiddenInput.autocomplete = 'current-password';
-
-      // Bitwarden checks: width>=10, height>=10, opacity>=0.1, display!=none, visibility!=hidden.
-      // Transparent styling: completely invisible to the user, but 100% visible & fillable to Bitwarden.
-      hiddenInput.style.cssText = [
+      hiddenForm = document.createElement('form');
+      hiddenForm.id = 'bmpf-hidden-form';
+      hiddenForm.autocomplete = 'on';
+      hiddenForm.style.cssText = [
         'position: fixed',
         'top: 60px',
         'right: 20px',
         'width: 60px',
         'height: 35px',
+        'margin: 0',
+        'padding: 0',
+        'border: none',
+        'background: transparent',
+        'z-index: 2147483647',
+        'pointer-events: auto'
+      ].join(';');
+
+      // Optional hidden username field to help Bitwarden pair username + password correctly
+      const hiddenUser = document.createElement('input');
+      hiddenUser.type = 'text';
+      hiddenUser.name = 'username';
+      hiddenUser.autocomplete = 'username';
+      hiddenUser.tabIndex = -1;
+      hiddenUser.setAttribute('aria-hidden', 'true');
+      hiddenUser.style.cssText = 'position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; border: none;';
+      hiddenForm.appendChild(hiddenUser);
+
+      hiddenInput = document.createElement('input');
+      hiddenInput.type = 'password';
+      hiddenInput.id = 'bmpf-hidden-password';
+      hiddenInput.name = 'password';
+      hiddenInput.autocomplete = 'current-password';
+      hiddenInput.placeholder = 'Bitwarden autofill';
+
+      // Bitwarden checks: width>=10, height>=10, opacity>=0.1, display!=none, visibility!=hidden.
+      // Transparent styling: completely invisible to user, 100% visible & fillable to Bitwarden.
+      hiddenInput.style.cssText = [
+        'width: 100%',
+        'height: 100%',
         'opacity: 1',
         'background: transparent !important',
         'color: transparent !important',
@@ -202,34 +317,24 @@
         'outline: none !important',
         'caret-color: transparent !important',
         'box-shadow: none !important',
-        'z-index: 2147483647',
         'cursor: default'
       ].join(';');
 
-      const onPasswordInput = () => {
-        if (isFilling) return;
-        const val = hiddenInput.value;
-        if (!val) return;
+      hiddenForm.appendChild(hiddenInput);
 
-        isFilling = true;
-        console.log('[BMPF] Intercepted password autofill, updating masked fields...');
+      // On input: debounce to let Bitwarden finish streaming/typing full string
+      hiddenInput.addEventListener('input', () => scheduleProcessPassword(400));
+      // On change/blur: user or extension finished, flush immediately
+      hiddenInput.addEventListener('change', () => processPassword());
+      hiddenInput.addEventListener('blur', () => processPassword());
+      hiddenInput.addEventListener('paste', () => scheduleProcessPassword(50));
 
-        const filledCount = adapter.fill(val);
-        console.log(`[BMPF] Successfully filled ${filledCount} characters.`);
+      hiddenForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        processPassword();
+      });
 
-        // Wipe proxy password immediately
-        hiddenInput.value = '';
-
-        setTimeout(() => {
-          isFilling = false;
-        }, 400);
-      };
-
-      hiddenInput.addEventListener('input', onPasswordInput);
-      hiddenInput.addEventListener('change', onPasswordInput);
-      hiddenInput.addEventListener('paste', () => setTimeout(onPasswordInput, 10));
-
-      // Periodic check to capture extensions that update .value without DOM events
+      // Periodic check in case extension updates .value directly without standard DOM events
       let lastVal = '';
       const checkInterval = setInterval(() => {
         if (!hiddenInput || !hiddenInput.isConnected) {
@@ -238,28 +343,29 @@
         }
         if (hiddenInput.value && hiddenInput.value !== lastVal) {
           lastVal = hiddenInput.value;
-          onPasswordInput();
+          scheduleProcessPassword(350);
         }
-      }, 250);
+      }, 200);
 
-      document.body.appendChild(hiddenInput);
+      document.body.appendChild(hiddenForm);
 
-      // Place over the masked input area if possible
+      // Place over the active masked input container for natural click targeting
       const firstActive = masked.find(m => m.active);
       if (firstActive && firstActive.input) {
         try {
           const rect = firstActive.input.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
-            hiddenInput.style.top = `${Math.max(10, rect.top)}px`;
-            hiddenInput.style.left = `${Math.max(10, rect.left)}px`;
-            hiddenInput.style.width = `${Math.max(40, rect.width)}px`;
-            hiddenInput.style.height = `${Math.max(30, rect.height)}px`;
+            hiddenForm.style.top = `${Math.max(10, rect.top)}px`;
+            hiddenForm.style.left = `${Math.max(10, rect.left)}px`;
+            hiddenForm.style.width = `${Math.max(40, rect.width)}px`;
+            hiddenForm.style.height = `${Math.max(30, rect.height)}px`;
           }
         } catch (_) {}
       }
 
-      // Automatically focus the hidden input so pressing Ctrl+Shift+L immediately targets it
+      // Automatically focus hidden input so Ctrl+Shift+L immediately targets it
       hiddenInput.focus();
+      console.log(`[BMPF] Active masked inputs detected on ${adapter.name}. Ready for Bitwarden autofill.`);
     }
   }
 

@@ -1,55 +1,82 @@
-# Bank Masked Password Autofill (Firefox & Chrome Extension)
+# Bank Masked Password Autofill
 
-Lekkie, uniwersalne rozszerzenie (Manifest V3) do przeglądarek **Firefox**, **Google Chrome**, **Chromium**, **Brave** oraz **Microsoft Edge**, umożliwiające bezproblemowe logowanie do **ING Bank Śląski** oraz **Bank Pekao SA** przy użyciu **Bitwardena** (oraz innych menedżerów haseł).
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Manifest V3](https://img.shields.io/badge/Manifest-V3-success.svg)](manifest.json)
+[![Browsers](https://img.shields.io/badge/Browsers-Firefox%20%7C%20Chrome%20%7C%20Brave%20%7C%20Edge-orange.svg)](#installation)
 
----
-
-## Jak to działa (Zero UI)
-
-* **Brak zbędnych paneli:** Rozszerzenie nie dodaje żadnych pasków, szuflad ani przycisków.
-* **Niewidoczny input dla Bitwardena:** Gdy bank wyświetla formularz hasła maskowanego (krok 2), rozszerzenie dodaje w tle transparentne pole hasła `<input type="password" autocomplete="current-password">`, idealnie widoczne dla silnika autouzupełniania Bitwardena.
-* **Automatyczne rozbicie:** W momencie gdy Bitwarden uzupełnia to pole (np. po wciśnięciu <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd>), zdarzenie przechwytuje pełne hasło, wylicza aktywne kratki banku, wpisuje w nie odpowiednie znaki, a transparentne pole pomocnika czyści.
+A lightweight, **zero-UI browser extension** (Manifest V3) that enables seamless password autofill for banks using masked password inputs (**ING Bank Śląski** and **Bank Pekao SA**) with **Bitwarden**, 1Password, KeePass, or browser password managers.
 
 ---
 
-## Instalacja
+## The Problem
 
-### W Google Chrome / Chromium / Brave / Edge:
-1. Otwórz stronę zarządzania rozszerzeniami: `chrome://extensions` (w Brave: `brave://extensions`, w Edge: `edge://extensions`).
-2. Włącz przełącznik **Tryb dewelopera** (Developer mode) w prawym górnym rogu.
-3. Kliknij przycisk **Załaduj rozpakowane** (Load unpacked) w lewym górnym rogu.
-4. Wybierz katalog:
-   ```text
-   /home/thelost/Projekty/bank-masked-password-extension
+Banks like **ING Bank Śląski** and **Bank Pekao SA** ask for masked passwords during login (e.g. entering only the 2nd, 5th, 8th, 12th characters into individual boxes). Password managers (Bitwarden, 1Password, etc.) cannot natively fill individual fragmented input boxes, forcing users to manually uncover, count characters, or copy-paste into temporary text editors.
+
+## The Solution: Zero-UI Autofill
+
+Instead of adding floating toolbars, intrusive sidebars, or manual copy-paste popups:
+
+1. **Invisible Helper Input:** When you reach the bank's masked password step, the extension inserts a completely transparent `<form>` with `<input type="password" autocomplete="current-password">`.
+2. **Native Extension Recognition:** Password managers like Bitwarden recognize standard credentials and offer autofill (e.g., via <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> or autofill menu).
+3. **Automated Position Slicing:** When the password manager fills the hidden input, the extension:
+   * Inspects the bank's active input slots.
+   * Extracts the exact characters corresponding to the required indices.
+   * Dispatches framework-specific events (`input`, `change`, `model-value-changed` for Lit/Lion and Angular).
+   * Automatically clears the raw password buffer after filling.
+
+---
+
+## Supported Banks
+
+| Bank | Framework | Mechanism |
+| :--- | :--- | :--- |
+| **ING Bank Śląski** | Lit & Lion Web Components (`@lion/ui`) | Matches `password-0` ... `password-31` in shadow DOM, handles `modelValue` updates. |
+| **Bank Pekao SA** | Angular (`@angular/forms`) | Matches `<uuid>-<index>` password inputs, handles Angular reactive form controls. |
+
+---
+
+## Security & Privacy
+
+* **Zero External Communication:** The extension does not make any network requests. No telemetry, no analytics, no external servers.
+* **No Elevated Permissions:** Requires zero special browser permissions (`"permissions": []`).
+* **Immediate Cleanup:** The raw password entered into the transparent field is wiped from memory as soon as the characters are distributed to the bank's fields.
+* **Open Source:** Licensed under the permissive [MIT License](LICENSE).
+
+---
+
+## Installation
+
+### Google Chrome / Brave / Chromium / Microsoft Edge
+
+1. Clone or download this repository:
+   ```bash
+   git clone https://github.com/Thelost77/bank-masked-password-autofill.git
    ```
-5. Rozszerzenie zostanie załadowane i jest od razu aktywne.
+2. In your browser, open `chrome://extensions` (or `brave://extensions`, `edge://extensions`).
+3. Enable **"Developer mode"** (top-right toggle).
+4. Click **"Load unpacked"** (top-left button).
+5. Select the cloned repository folder.
 
-### W Firefox:
-1. Otwórz stronę: `about:debugging#/runtime/this-firefox`
-2. Kliknij **Załaduj dodatek tymczasowy...** (Load Temporary Add-on...).
-3. Wybierz plik `manifest.json` z katalogu:
+### Mozilla Firefox
+
+1. Open Firefox and navigate to:
    ```text
-   /home/thelost/Projekty/bank-masked-password-extension/manifest.json
+   about:debugging#/runtime/this-firefox
    ```
+2. Click **"Load Temporary Add-on..."**.
+3. Select the [`manifest.json`](manifest.json) file in this repository.
 
 ---
 
-## Jak używać
+## Usage
 
-1. Wejdź na stronę logowania:
-   - **ING:** `https://login.ingbank.pl/mojeing/app/#login`
-   - **Pekao:** `https://www.pekao24.pl/logowanie`
-2. **Krok 1 (Login):**
-   - Wpisz swój login lub uzupełnij Bitwardenem standardowo i przejdź do kroku hasła ("Dalej").
-3. **Krok 2 (Hasło maskowane):**
-   - Gdy pojawią się kratki hasła maskowanego, naciśnij skrót Bitwardena: <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> (lub kliknij ikonę Bitwardena na pasku).
-   - Aktywne kratki banku natychmiast uzupełnią się odpowiednimi znakami (kropkami).
-   - Kliknij "Zaloguj" lub naciśnij Enter.
+1. Open the login page for **ING** (`https://login.ingbank.pl/mojeing/app/#login`) or **Pekao** (`https://www.pekao24.pl/logowanie`).
+2. **Step 1:** Enter your username/login as usual and advance to the password screen.
+3. **Step 2:** When the masked password boxes appear, press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> (or click Bitwarden autofill).
+4. The requested boxes will populate with password dots immediately. Click **"Zaloguj"** / Log in.
 
 ---
 
-## Pliki rozszerzenia
+## License
 
-* [manifest.json](file:///home/thelost/Projekty/bank-masked-password-extension/manifest.json): Uniwersalny manifest Manifest V3 (kompatybilny z Chrome i Firefox).
-* [content.js](file:///home/thelost/Projekty/bank-masked-password-extension/content.js): Logika adapterów dla ING oraz Pekao, dynamiczne mapowanie pól i obsługa zdarzeń.
-* [styles.css](file:///home/thelost/Projekty/bank-masked-password-extension/styles.css): Minimalne style transparentności.
+This project is licensed under the [MIT License](LICENSE).
